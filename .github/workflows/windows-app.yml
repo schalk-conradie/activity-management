@@ -82,7 +82,8 @@ jobs:
           }
 
           $certPath = Join-Path $env:RUNNER_TEMP "activity-management-signing.pfx"
-          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:WINDOWS_PFX_BASE64))
+          $pfxBase64 = $env:WINDOWS_PFX_BASE64 -replace '\s', ''
+          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($pfxBase64))
           $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($certPath, $env:WINDOWS_PFX_PASSWORD)
           $publicCertPath = Join-Path $env:RUNNER_TEMP "ActivityManagement-Signing.cer"
           [IO.File]::WriteAllBytes($publicCertPath, $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
