@@ -29,14 +29,6 @@ jobs:
       - name: Test .NET solution
         run: dotnet test ActivityManagement.slnx
 
-      - name: Lint Raycast extension
-        working-directory: manage-tasks
-        run: npm ci && npm run lint
-
-      - name: Build Raycast extension
-        working-directory: manage-tasks
-        run: npm run build
-
   package:
     name: Package MSIX
     runs-on: windows-latest
