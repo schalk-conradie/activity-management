@@ -32,7 +32,7 @@ public sealed partial class WidgetWindow : UserControl, IDisposable
         _timer.Tick += (_, _) =>
         {
             Refresh();
-            _ = Task.Run(_taskbarHost.UpdatePosition);
+            _taskbarHost.UpdatePosition();
         };
         _timer.Start();
         Refresh();
@@ -73,7 +73,7 @@ public sealed partial class WidgetWindow : UserControl, IDisposable
     private async void QueuePositionUpdate(TimeSpan delay)
     {
         await Task.Delay(delay).ConfigureAwait(false);
-        _taskbarHost.UpdatePosition();
+        DispatcherQueue.TryEnqueue(_taskbarHost.UpdatePosition);
     }
 
     private static string FormatDue(DateTimeOffset? dueAt)

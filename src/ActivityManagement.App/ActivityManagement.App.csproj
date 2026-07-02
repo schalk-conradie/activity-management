@@ -25,4 +25,11 @@
     <ProjectReference Include="..\ActivityManagement.Core\ActivityManagement.Core.csproj" />
   </ItemGroup>
 
+  <Target Name="CopyWinUIResourcesToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <WinUIResource Include="$(TargetDir)*.xbf;$(TargetDir)*.pri" />
+    </ItemGroup>
+    <Copy SourceFiles="@(WinUIResource)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+  </Target>
+
 </Project>
