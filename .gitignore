@@ -1,0 +1,22 @@
+# Visual Studio
+.vs/
+
+# .NET
+bin/
+obj/
+TestResults/
+artifacts/
+
+# Raycast / Node
+node_modules/
+dist/
+.raycast/
+
+# Logs and local environment
+*.log
+.env
+.env.*
+
+# OS files
+Thumbs.db
+Desktop.ini
