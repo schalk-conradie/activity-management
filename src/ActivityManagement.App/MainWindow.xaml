@@ -30,7 +30,7 @@
                 </ComboBox>
             </Grid>
 
-            <ListView x:Name="TasksList" Grid.Row="1" ItemsSource="{x:Bind Tasks, Mode=OneWay}" SelectionMode="None">
+            <ListView x:Name="TasksList" Grid.Row="1" ItemsSource="{x:Bind Tasks, Mode=OneWay}" SelectionMode="None" IsItemClickEnabled="True" ItemClick="TasksList_ItemClick">
                 <ListView.ItemTemplate>
                     <DataTemplate x:DataType="local:TaskRow">
                         <Grid Padding="0,8" ColumnDefinitions="*,Auto" ColumnSpacing="12">

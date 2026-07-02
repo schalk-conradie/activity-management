@@ -62,6 +62,38 @@ public sealed class TaskStoreTests
     }
 
     [Fact]
+    public void UpdateStoresEditableTaskProperties()
+    {
+        using var fixture = TestDatabase.Create();
+        fixture.Store.Initialize();
+        var createdAt = new DateTimeOffset(2026, 7, 2, 10, 0, 0, TimeSpan.Zero);
+        var updatedAt = createdAt.AddHours(1);
+        var dueAt = createdAt.AddDays(1);
+        var task = fixture.Store.Create(new NewActivityTask("Original"), createdAt);
+
+        var updated = fixture.Store.Update(new ActivityTaskUpdate(
+            task.Id,
+            "Updated",
+            dueAt,
+            ActivityTaskPriority.Urgent,
+            ActivityTaskStatus.InProgress,
+            "manual",
+            "https://example.com/task",
+            "More context"), updatedAt);
+
+        Assert.NotNull(updated);
+        Assert.Equal("Updated", updated.Title);
+        Assert.Equal(dueAt, updated.DueAt);
+        Assert.Equal(ActivityTaskPriority.Urgent, updated.Priority);
+        Assert.Equal(ActivityTaskStatus.InProgress, updated.Status);
+        Assert.Equal("manual", updated.Source);
+        Assert.Equal("https://example.com/task", updated.ExternalReference);
+        Assert.Equal("More context", updated.Note);
+        Assert.Equal(createdAt, updated.CreatedAt);
+        Assert.Equal(updatedAt, updated.UpdatedAt);
+    }
+
+    [Fact]
     public void ReminderCandidatesIncludeDueAndImportantUnfinishedTasks()
     {
         using var fixture = TestDatabase.Create();

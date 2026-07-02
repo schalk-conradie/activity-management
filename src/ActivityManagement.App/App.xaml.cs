@@ -162,6 +162,7 @@ public sealed partial class App : Application
         _reminderNotifications?.Dispose();
         _widgetWindow?.Dispose();
         _shellIntegration?.Dispose();
+        _mainWindow?.CloseForShutdown();
         Exit();
     }
 }

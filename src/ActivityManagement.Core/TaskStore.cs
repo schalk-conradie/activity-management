@@ -47,6 +47,16 @@ public sealed record NewActivityTask(
     string? ExternalReference = null,
     string? Note = null);
 
+public sealed record ActivityTaskUpdate(
+    long Id,
+    string Title,
+    DateTimeOffset? DueAt,
+    string Priority,
+    string Status,
+    string? Source,
+    string? ExternalReference,
+    string? Note);
+
 public sealed record ActivityTask(
     long Id,
     string Title,
@@ -273,6 +283,54 @@ public sealed class TaskStore
         command.Parameters.AddWithValue("$updated_at", ToStorageText(now ?? DateTimeOffset.UtcNow));
 
         return command.ExecuteNonQuery() == 1;
+    }
+
+    public ActivityTask? Update(ActivityTaskUpdate task, DateTimeOffset? now = null)
+    {
+        if (string.IsNullOrWhiteSpace(task.Title))
+        {
+            throw new ArgumentException("Task title is required.", nameof(task));
+        }
+
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE tasks
+            SET title = $title,
+                due_at = $due_at,
+                priority = $priority,
+                status = $status,
+                source = $source,
+                external_reference = $external_reference,
+                note = $note,
+                updated_at = $updated_at
+            WHERE id = $id
+            RETURNING
+                id,
+                title,
+                due_at,
+                priority,
+                status,
+                source,
+                external_reference,
+                note,
+                reminder_snoozed_until,
+                last_notified_at,
+                created_at,
+                updated_at;
+            """;
+        command.Parameters.AddWithValue("$id", task.Id);
+        command.Parameters.AddWithValue("$title", task.Title);
+        AddNullableDate(command, "$due_at", task.DueAt);
+        command.Parameters.AddWithValue("$priority", task.Priority);
+        command.Parameters.AddWithValue("$status", task.Status);
+        AddNullableText(command, "$source", task.Source);
+        AddNullableText(command, "$external_reference", task.ExternalReference);
+        AddNullableText(command, "$note", task.Note);
+        command.Parameters.AddWithValue("$updated_at", ToStorageText(now ?? DateTimeOffset.UtcNow));
+
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? ReadTask(reader) : null;
     }
 
     public bool SnoozeReminder(long id, TimeSpan duration, DateTimeOffset? now = null)

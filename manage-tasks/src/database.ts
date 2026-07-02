@@ -59,8 +59,8 @@ const TASK_COLUMNS = `
 export const TASKS_QUERY = `
   SELECT ${TASK_COLUMNS}
   FROM tasks
+  WHERE status NOT IN ('done', 'canceled')
   ORDER BY
-    status IN ('done', 'canceled'),
     due_at IS NULL,
     due_at,
     created_at;

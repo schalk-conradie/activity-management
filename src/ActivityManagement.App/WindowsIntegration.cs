@@ -29,6 +29,20 @@ internal static class WindowPlacement
         NativeWindowStyles.HideFromTaskbar(window, noActivate: false);
     }
 
+    public static void HideInsteadOfClose(Window window, Func<bool> shouldHide)
+    {
+        GetAppWindow(window).Closing += (_, args) =>
+        {
+            if (!shouldHide())
+            {
+                return;
+            }
+
+            args.Cancel = true;
+            NativeWindowStyles.Hide(window);
+        };
+    }
+
     public static void MoveNearTray(Window window, int width, int height, int yOffset)
     {
         var workingArea = GetWorkArea();
@@ -551,6 +565,15 @@ internal static class NativeWindowStyles
             SetWindowPosFlags.NoMove | SetWindowPosFlags.NoSize | SetWindowPosFlags.NoZOrder | SetWindowPosFlags.FrameChanged | SetWindowPosFlags.NoActivate);
     }
 
+    public static void Hide(Window window)
+    {
+        var hwnd = WindowNative.GetWindowHandle(window);
+        if (!ShowWindow(hwnd, ShowWindowCommand.Hide))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+    }
+
     private static long GetWindowLong(IntPtr hwnd, int index)
     {
         return IntPtr.Size == 8
@@ -584,6 +607,14 @@ internal static class NativeWindowStyles
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool SetWindowPos(IntPtr hwnd, IntPtr hwndInsertAfter, int x, int y, int cx, int cy, SetWindowPosFlags flags);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool ShowWindow(IntPtr hwnd, ShowWindowCommand command);
+}
+
+internal enum ShowWindowCommand
+{
+    Hide = 0
 }
 
 [Flags]
