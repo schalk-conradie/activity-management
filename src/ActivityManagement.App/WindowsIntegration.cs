@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 using ActivityManagement.Core;
+using Microsoft.Win32;
 using Microsoft.UI;
 using Microsoft.UI.Content;
 using Microsoft.UI.Dispatching;
@@ -11,6 +12,8 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Hosting;
 using Microsoft.Windows.AppNotifications;
 using Microsoft.Windows.AppNotifications.Builder;
+using Velopack;
+using Velopack.Sources;
 using Windows.Graphics;
 using WinRT.Interop;
 
@@ -601,6 +604,87 @@ internal struct Rect
     public int Top;
     public int Right;
     public int Bottom;
+}
+
+internal static class StartupRegistration
+{
+    private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    private const string ValueName = "ActivityManagement";
+
+    public static void Enable()
+    {
+        var executablePath = GetStableExecutablePath();
+        if (string.IsNullOrWhiteSpace(executablePath))
+        {
+            return;
+        }
+
+        using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: true)
+            ?? Registry.CurrentUser.CreateSubKey(RunKeyPath, writable: true);
+        key?.SetValue(ValueName, $"\"{executablePath}\"", RegistryValueKind.String);
+    }
+
+    public static void Disable()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: true);
+        key?.DeleteValue(ValueName, throwOnMissingValue: false);
+    }
+
+    private static string? GetStableExecutablePath()
+    {
+        var executablePath = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(executablePath))
+        {
+            return null;
+        }
+
+        var directory = Path.GetDirectoryName(executablePath);
+        if (!string.IsNullOrWhiteSpace(directory)
+            && string.Equals(Path.GetFileName(directory), "current", StringComparison.OrdinalIgnoreCase)
+            && Directory.GetParent(directory) is { } rootDirectory)
+        {
+            var stubPath = Path.Combine(rootDirectory.FullName, Path.GetFileName(executablePath));
+            if (File.Exists(stubPath))
+            {
+                return stubPath;
+            }
+        }
+
+        return executablePath;
+    }
+}
+
+internal sealed class ReleaseUpdater
+{
+    private const string RepositoryUrl = "https://github.com/schalk-conradie/activity-management";
+
+    public string? Error { get; private set; }
+
+    public async void CheckForUpdates()
+    {
+        try
+        {
+            var source = new GithubSource(RepositoryUrl, accessToken: null, prerelease: false);
+            var manager = new UpdateManager(source);
+            if (!manager.IsInstalled)
+            {
+                return;
+            }
+
+            var update = await manager.CheckForUpdatesAsync().ConfigureAwait(false);
+            if (update is null)
+            {
+                return;
+            }
+
+            await manager.DownloadUpdatesAsync(update).ConfigureAwait(false);
+            manager.ApplyUpdatesAndRestart(update);
+        }
+        catch (Exception ex)
+        {
+            Error = ex.Message;
+        }
+    }
 }
 
 internal sealed class ShellIntegrationHost : IDisposable

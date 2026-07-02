@@ -30,7 +30,7 @@ jobs:
         run: dotnet test ActivityManagement.slnx
 
   package:
-    name: Package MSIX
+    name: Package Velopack Installer
     runs-on: windows-latest
     needs: test
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
@@ -46,9 +46,6 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
-
       - name: Calculate package version
         id: version
         shell: pwsh
@@ -62,132 +59,42 @@ jobs:
             $semver = "1.0.0"
           }
 
-          $msixVersion = "$semver.${{ github.run_number }}"
           "semver=$semver" >> $env:GITHUB_OUTPUT
-          "msix_version=$msixVersion" >> $env:GITHUB_OUTPUT
 
-      - name: Prepare signing certificate
-        id: signing
-        shell: pwsh
-        env:
-          WINDOWS_PFX_BASE64: ${{ secrets.WINDOWS_PFX_BASE64 }}
-          WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_PFX_BASE64)) {
-            throw "Set the WINDOWS_PFX_BASE64 repository secret to a base64-encoded code signing .pfx."
-          }
-
-          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_PFX_PASSWORD)) {
-            throw "Set the WINDOWS_PFX_PASSWORD repository secret."
-          }
-
-          $certPath = Join-Path $env:RUNNER_TEMP "activity-management-signing.pfx"
-          $pfxBase64 = $env:WINDOWS_PFX_BASE64 -replace '\s', ''
-          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($pfxBase64))
-          $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($certPath, $env:WINDOWS_PFX_PASSWORD)
-          $publicCertPath = Join-Path $env:RUNNER_TEMP "ActivityManagement-Signing.cer"
-          [IO.File]::WriteAllBytes($publicCertPath, $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
-
-          "cert_path=$certPath" >> $env:GITHUB_OUTPUT
-          "public_cert_path=$publicCertPath" >> $env:GITHUB_OUTPUT
-          "publisher=$($cert.Subject)" >> $env:GITHUB_OUTPUT
-
-      - name: Stamp package manifest
+      - name: Publish app
         shell: pwsh
         run: |
-          $manifestPath = Join-Path $env:GITHUB_WORKSPACE "src\ActivityManagement.App\Package.appxmanifest"
-          [xml]$manifest = Get-Content $manifestPath
-          $namespace = [System.Xml.XmlNamespaceManager]::new($manifest.NameTable)
-          $namespace.AddNamespace("m", "http://schemas.microsoft.com/appx/manifest/foundation/windows10")
-          $identity = $manifest.SelectSingleNode("/m:Package/m:Identity", $namespace)
-          $identity.Version = "${{ steps.version.outputs.msix_version }}"
-          $identity.Publisher = "${{ steps.signing.outputs.publisher }}"
-          $manifest.Save($manifestPath)
+          dotnet publish src\ActivityManagement.App\ActivityManagement.App.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:Platform=x64 `
+            -p:Version=${{ steps.version.outputs.semver }} `
+            -o artifacts\publish
 
-      - name: Build signed MSIX
-        shell: pwsh
-        env:
-          WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
-        run: |
-          $packageDir = Join-Path $env:GITHUB_WORKSPACE "artifacts\msix"
-          New-Item -ItemType Directory -Force $packageDir | Out-Null
-
-          $arguments = @(
-            "src\ActivityManagement.App\ActivityManagement.App.csproj",
-            "/restore",
-            "/p:Configuration=Release",
-            "/p:Platform=x64",
-            "/p:RuntimeIdentifier=win-x64",
-            "/p:WindowsPackageType=MSIX",
-            "/p:GenerateAppxPackageOnBuild=true",
-            "/p:AppxPackageSigningEnabled=true",
-            "/p:PackageCertificateKeyFile=${{ steps.signing.outputs.cert_path }}",
-            "/p:PackageCertificatePassword=$env:WINDOWS_PFX_PASSWORD",
-            "/p:UapAppxPackageBuildMode=SideloadOnly",
-            "/p:AppxBundle=Never",
-            "/p:AppxPackageDir=$packageDir\"
-          )
-
-          & msbuild @arguments
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-          }
-
-      - name: Locate app package
-        id: msix
+      - name: Install Velopack CLI
         shell: pwsh
         run: |
-          $package = Get-ChildItem (Join-Path $env:GITHUB_WORKSPACE "artifacts\msix") -Recurse -Filter "ActivityManagement.App_*.msix" |
-            Where-Object { $_.DirectoryName -notmatch "\\Dependencies(\\|$)" } |
-            Select-Object -First 1
-          if ($null -eq $package) {
-            throw "MSIX package was not created."
-          }
+          dotnet tool install --global vpk --version 1.2.0
 
-          "path=$($package.FullName)" >> $env:GITHUB_OUTPUT
-
-      - name: Create App Installer file
+      - name: Package installer
         shell: pwsh
         run: |
-          $releaseDir = Join-Path $env:GITHUB_WORKSPACE "artifacts\release"
-          New-Item -ItemType Directory -Force $releaseDir | Out-Null
-
-          $msixPath = Join-Path $releaseDir "ActivityManagement-x64.msix"
-          Copy-Item "${{ steps.msix.outputs.path }}" $msixPath -Force
-          Copy-Item "${{ steps.signing.outputs.public_cert_path }}" (Join-Path $releaseDir "ActivityManagement-Signing.cer") -Force
-          Copy-Item "scripts\Install-ActivityManagement.ps1" (Join-Path $releaseDir "Install-ActivityManagement.ps1") -Force
-
-          $manifestPath = Join-Path $env:GITHUB_WORKSPACE "src\ActivityManagement.App\Package.appxmanifest"
-          [xml]$manifest = Get-Content $manifestPath
-          $namespace = [System.Xml.XmlNamespaceManager]::new($manifest.NameTable)
-          $namespace.AddNamespace("m", "http://schemas.microsoft.com/appx/manifest/foundation/windows10")
-          $identity = $manifest.SelectSingleNode("/m:Package/m:Identity", $namespace)
-
-          $version = "${{ steps.version.outputs.msix_version }}"
-          $baseUri = "https://github.com/${{ github.repository }}/releases/latest/download"
-          $appInstallerUri = "$baseUri/ActivityManagement.appinstaller"
-          $msixUri = "$baseUri/ActivityManagement-x64.msix"
-          $publisher = [System.Security.SecurityElement]::Escape($identity.Publisher)
-
-          $appInstaller = @"
-          <?xml version="1.0" encoding="utf-8"?>
-          <AppInstaller xmlns="http://schemas.microsoft.com/appx/appinstaller/2021" Version="$version" Uri="$appInstallerUri">
-            <MainPackage Name="$($identity.Name)" Publisher="$publisher" Version="$version" ProcessorArchitecture="x64" Uri="$msixUri" />
-            <UpdateSettings>
-              <OnLaunch HoursBetweenUpdateChecks="0" ShowPrompt="true" UpdateBlocksActivation="true" />
-              <AutomaticBackgroundTask />
-            </UpdateSettings>
-          </AppInstaller>
-          "@
-
-          $appInstallerPath = Join-Path $releaseDir "ActivityManagement.appinstaller"
-          $appInstaller.TrimStart() | Set-Content $appInstallerPath -Encoding UTF8
+          vpk pack `
+            --packId ActivityManagement `
+            --packTitle "Activity Management" `
+            --packAuthors "Schalk" `
+            --packVersion ${{ steps.version.outputs.semver }} `
+            --packDir artifacts\publish `
+            --mainExe ActivityManagement.App.exe `
+            --icon src\ActivityManagement.App\Assets\app-icon.ico `
+            --outputDir artifacts\velopack
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: activity-management-installer
-          path: artifacts/release/*
+          path: artifacts/velopack/*
 
       - name: Publish release assets
         if: startsWith(github.ref, 'refs/tags/v')
@@ -201,9 +108,5 @@ jobs:
             gh release create $tag --title $tag --notes "Activity Management $tag"
           }
 
-          gh release upload $tag `
-            "artifacts\release\ActivityManagement-x64.msix" `
-            "artifacts\release\ActivityManagement-Signing.cer" `
-            "artifacts\release\Install-ActivityManagement.ps1" `
-            "artifacts\release\ActivityManagement.appinstaller" `
-            --clobber
+          $assets = Get-ChildItem "artifacts\velopack" -File | ForEach-Object { $_.FullName }
+          gh release upload $tag @assets --clobber

@@ -12,6 +12,7 @@ public sealed partial class App : Application
     private WidgetWindow? _widgetWindow;
     private ShellIntegrationHost? _shellIntegration;
     private ReminderNotifications? _reminderNotifications;
+    private ReleaseUpdater? _releaseUpdater;
 
     public App()
     {
@@ -27,6 +28,8 @@ public sealed partial class App : Application
 
         _shellIntegration = new ShellIntegrationHost(ShowFlyout, ShowQuickCreate, ExitApplication);
         _reminderNotifications = new ReminderNotifications(_store, _widgetWindow.DispatcherQueue, HandleNotificationAction, RefreshOpenWindows);
+        _releaseUpdater = new ReleaseUpdater();
+        _releaseUpdater.CheckForUpdates();
 
         var activatedArgs = AppInstance.GetCurrent().GetActivatedEventArgs();
         if (activatedArgs.Kind == ExtendedActivationKind.AppNotification)
@@ -144,6 +147,11 @@ public sealed partial class App : Application
         if (!string.IsNullOrWhiteSpace(_reminderNotifications?.Error))
         {
             messages.Add($"Notifications unavailable: {_reminderNotifications.Error}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(_releaseUpdater?.Error))
+        {
+            messages.Add($"Updater unavailable: {_releaseUpdater.Error}");
         }
 
         return messages.Count == 0 ? null : string.Join(Environment.NewLine, messages);
