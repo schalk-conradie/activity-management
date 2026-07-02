@@ -15,7 +15,7 @@ The GitHub workflow signs the MSIX with a self-signed `.pfx` stored as repositor
 
 The public `.cer` certificate from the same signing certificate must be trusted on each machine that installs the app. Keep using the same certificate for future releases. Windows will reject updates signed by a different publisher.
 
-Release builds publish `ActivityManagement-Signing.cer` next to the installer. Install that certificate into `Current User > Trusted People` before opening `ActivityManagement.appinstaller`.
+Release builds publish `Install-ActivityManagement.ps1` next to the installer. Run that script from the folder containing the release assets. It trusts `ActivityManagement-Signing.cer` for the current user in both `Trusted Root Certification Authorities` and `Trusted People`, then opens `ActivityManagement.appinstaller`.
 
 ## Startup
 

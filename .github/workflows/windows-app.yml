@@ -155,6 +155,7 @@ jobs:
           $msixPath = Join-Path $releaseDir "ActivityManagement-x64.msix"
           Copy-Item "${{ steps.msix.outputs.path }}" $msixPath -Force
           Copy-Item "${{ steps.signing.outputs.public_cert_path }}" (Join-Path $releaseDir "ActivityManagement-Signing.cer") -Force
+          Copy-Item "scripts\Install-ActivityManagement.ps1" (Join-Path $releaseDir "Install-ActivityManagement.ps1") -Force
 
           $manifestPath = Join-Path $env:GITHUB_WORKSPACE "src\ActivityManagement.App\Package.appxmanifest"
           [xml]$manifest = Get-Content $manifestPath
@@ -203,5 +204,6 @@ jobs:
           gh release upload $tag `
             "artifacts\release\ActivityManagement-x64.msix" `
             "artifacts\release\ActivityManagement-Signing.cer" `
+            "artifacts\release\Install-ActivityManagement.ps1" `
             "artifacts\release\ActivityManagement.appinstaller" `
             --clobber
