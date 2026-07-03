@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using ActivityManagement.Core;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -172,6 +173,159 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private async void RecurringTasks_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isDialogOpen)
+        {
+            return;
+        }
+
+        var xamlRoot = Content.XamlRoot;
+        if (xamlRoot is null)
+        {
+            return;
+        }
+
+        var titleBox = new TextBox
+        {
+            Header = "Title",
+            PlaceholderText = "Timesheet reminder"
+        };
+        var dayBox = CreateDayOfWeekBox(DateTimeOffset.Now.DayOfWeek);
+        dayBox.Header = "Day";
+        var timePicker = new TimePicker
+        {
+            Header = "Time",
+            ClockIdentifier = "24HourClock",
+            SelectedTime = new TimeSpan(16, 0, 0)
+        };
+        var priorityBox = CreatePriorityBox(ActivityTaskPriority.Normal);
+        priorityBox.Header = "Priority";
+        var noteBox = new TextBox
+        {
+            Header = "Note",
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            MinHeight = 72
+        };
+        var referenceBox = new TextBox
+        {
+            Header = "Reference",
+            PlaceholderText = "Optional URL or ticket reference"
+        };
+        var errorText = new TextBlock
+        {
+            TextWrapping = TextWrapping.Wrap,
+            Visibility = Visibility.Collapsed
+        };
+
+        var scheduleFields = new Grid
+        {
+            ColumnSpacing = 8,
+            ColumnDefinitions =
+            {
+                new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) },
+                new ColumnDefinition { Width = new GridLength(140) },
+                new ColumnDefinition { Width = new GridLength(112) }
+            }
+        };
+        scheduleFields.Children.Add(dayBox);
+        Grid.SetColumn(timePicker, 1);
+        scheduleFields.Children.Add(timePicker);
+        Grid.SetColumn(priorityBox, 2);
+        scheduleFields.Children.Add(priorityBox);
+
+        var rowsPanel = new StackPanel { Spacing = 4 };
+        var emptyText = new TextBlock
+        {
+            Text = "No recurring tasks.",
+            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
+        };
+        RefreshRecurringScheduleRows(rowsPanel, emptyText, errorText);
+
+        var addButton = new Button
+        {
+            Content = "Add recurring task",
+            HorizontalAlignment = HorizontalAlignment.Left
+        };
+        addButton.Click += (_, _) =>
+        {
+            var title = titleBox.Text.Trim();
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                ShowDialogError(errorText, "Title is required.");
+                titleBox.Focus(FocusState.Programmatic);
+                return;
+            }
+
+            if (timePicker.SelectedTime is not { } timeOfDay)
+            {
+                ShowDialogError(errorText, "Time is required.");
+                timePicker.Focus(FocusState.Programmatic);
+                return;
+            }
+
+            try
+            {
+                _store.CreateRecurringTask(new NewRecurringTask(
+                    title,
+                    SelectedDayOfWeek(dayBox),
+                    timeOfDay,
+                    SelectedPriority(priorityBox),
+                    NullIfWhiteSpace(referenceBox.Text),
+                    NullIfWhiteSpace(noteBox.Text)));
+                titleBox.Text = string.Empty;
+                noteBox.Text = string.Empty;
+                referenceBox.Text = string.Empty;
+                HideDialogError(errorText);
+                RefreshRecurringScheduleRows(rowsPanel, emptyText, errorText);
+                _tasksChanged();
+            }
+            catch (Exception ex)
+            {
+                ShowDialogError(errorText, ex.Message);
+            }
+        };
+
+        var panel = new StackPanel { Spacing = 12 };
+        panel.Children.Add(titleBox);
+        panel.Children.Add(scheduleFields);
+        panel.Children.Add(noteBox);
+        panel.Children.Add(referenceBox);
+        panel.Children.Add(addButton);
+        panel.Children.Add(errorText);
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Schedules",
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+        });
+        panel.Children.Add(emptyText);
+        panel.Children.Add(rowsPanel);
+
+        var dialog = new ContentDialog
+        {
+            Title = "Recurring tasks",
+            CloseButtonText = "Close",
+            Content = new ScrollViewer
+            {
+                Content = panel,
+                MaxHeight = 460,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+            },
+            XamlRoot = xamlRoot
+        };
+
+        _isDialogOpen = true;
+        try
+        {
+            await dialog.ShowAsync();
+        }
+        finally
+        {
+            _isDialogOpen = false;
+        }
+    }
+
     private async void TasksList_ItemClick(object sender, ItemClickEventArgs e)
     {
         if (e.ClickedItem is TaskRow taskRow)
@@ -216,6 +370,14 @@ public sealed partial class MainWindow : Window
         priorityBox.Header = "Priority";
         var statusBox = CreateStatusBox(task.Status);
         statusBox.Header = "Status";
+        var recurringText = task.RecurringTaskId is { } recurringTaskId && _store.GetRecurringTask(recurringTaskId) is { } schedule
+            ? new TextBlock
+            {
+                Text = $"Recurring: {FormatRecurringSchedule(schedule)}",
+                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+                TextWrapping = TextWrapping.Wrap
+            }
+            : null;
         var noteBox = new TextBox
         {
             Header = "Note",
@@ -247,6 +409,11 @@ public sealed partial class MainWindow : Window
         panel.Children.Add(dueTimePicker);
         panel.Children.Add(priorityBox);
         panel.Children.Add(statusBox);
+        if (recurringText is not null)
+        {
+            panel.Children.Add(recurringText);
+        }
+
         panel.Children.Add(noteBox);
         panel.Children.Add(sourceBox);
         panel.Children.Add(referenceBox);
@@ -366,6 +533,11 @@ public sealed partial class MainWindow : Window
         return ((ComboBoxItem?)statusBox.SelectedItem)?.Tag?.ToString() ?? ActivityTaskStatus.Pending;
     }
 
+    private static DayOfWeek SelectedDayOfWeek(ComboBox dayBox)
+    {
+        return ((ComboBoxItem?)dayBox.SelectedItem)?.Tag is DayOfWeek day ? day : DayOfWeek.Monday;
+    }
+
     private static ComboBox CreatePriorityBox(string selectedPriority)
     {
         var priorityBox = new ComboBox();
@@ -384,6 +556,87 @@ public sealed partial class MainWindow : Window
         AddComboBoxItem(statusBox, "Done", ActivityTaskStatus.Done, selectedStatus);
         AddComboBoxItem(statusBox, "Canceled", ActivityTaskStatus.Canceled, selectedStatus);
         return statusBox;
+    }
+
+    private static ComboBox CreateDayOfWeekBox(DayOfWeek selectedDay)
+    {
+        var dayBox = new ComboBox();
+        foreach (var day in Enum.GetValues<DayOfWeek>())
+        {
+            var item = new ComboBoxItem
+            {
+                Content = CultureInfo.CurrentCulture.DateTimeFormat.GetDayName(day),
+                Tag = day
+            };
+            dayBox.Items.Add(item);
+            if (day == selectedDay)
+            {
+                dayBox.SelectedItem = item;
+            }
+        }
+
+        return dayBox;
+    }
+
+    private void RefreshRecurringScheduleRows(StackPanel rowsPanel, TextBlock emptyText, TextBlock errorText)
+    {
+        var schedules = _store.ListRecurringTasks();
+        rowsPanel.Children.Clear();
+        emptyText.Visibility = schedules.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+
+        foreach (var schedule in schedules)
+        {
+            var row = new Grid
+            {
+                Padding = new Thickness(0, 6, 0, 6),
+                ColumnSpacing = 12,
+                ColumnDefinitions =
+                {
+                    new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) },
+                    new ColumnDefinition { Width = GridLength.Auto }
+                }
+            };
+
+            var details = new StackPanel { Spacing = 2 };
+            details.Children.Add(new TextBlock
+            {
+                Text = schedule.Title,
+                TextWrapping = TextWrapping.Wrap
+            });
+            details.Children.Add(new TextBlock
+            {
+                Text = FormatRecurringSchedule(schedule),
+                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+                TextWrapping = TextWrapping.Wrap
+            });
+
+            var actionButton = new Button
+            {
+                Content = schedule.IsActive ? "Pause" : "Resume",
+                Tag = schedule.Id
+            };
+            actionButton.Click += (_, _) =>
+            {
+                try
+                {
+                    if (_store.SetRecurringTaskActive(schedule.Id, !schedule.IsActive))
+                    {
+                        HideDialogError(errorText);
+                        RefreshRecurringScheduleRows(rowsPanel, emptyText, errorText);
+                        _tasksChanged();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    ShowDialogError(errorText, ex.Message);
+                }
+            };
+
+            row.Children.Add(details);
+            Grid.SetColumn(actionButton, 1);
+            row.Children.Add(actionButton);
+            rowsPanel.Children.Add(row);
+        }
     }
 
     private static void AddComboBoxItem(ComboBox comboBox, string content, string tag, string selectedTag)
@@ -420,6 +673,31 @@ public sealed partial class MainWindow : Window
         return value.ToLocalTime().ToString("g");
     }
 
+    private static string FormatRecurringSchedule(RecurringTaskSchedule schedule)
+    {
+        var status = schedule.IsActive ? string.Empty : " - Paused";
+        var time = DateTime.Today.Add(schedule.TimeOfDay).ToString("t", CultureInfo.CurrentCulture);
+        var priority = schedule.Priority.Replace('_', ' ');
+        if (!string.IsNullOrEmpty(priority))
+        {
+            priority = char.ToUpperInvariant(priority[0]) + priority[1..];
+        }
+
+        return $"{CultureInfo.CurrentCulture.DateTimeFormat.GetDayName(schedule.DayOfWeek)} at {time} - {priority}{status}";
+    }
+
+    private static void ShowDialogError(TextBlock errorText, string message)
+    {
+        errorText.Text = message;
+        errorText.Visibility = Visibility.Visible;
+    }
+
+    private static void HideDialogError(TextBlock errorText)
+    {
+        errorText.Text = string.Empty;
+        errorText.Visibility = Visibility.Collapsed;
+    }
+
     private static string? NullIfWhiteSpace(string value)
     {
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
@@ -446,6 +724,7 @@ public sealed class TaskRow
             {
                 FormatDue(task.DueAt),
                 FormatPriority(task.Priority),
+                task.RecurringTaskId is null ? null : "Recurring",
                 task.Source
             }.Where(value => !string.IsNullOrWhiteSpace(value))),
             HasExternalReference = ExternalReferences.GetOpenableUrl(task.ExternalReference) is not null

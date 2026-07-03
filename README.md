@@ -42,6 +42,7 @@ The Windows app provides:
 - `Ctrl+Shift+K` to open quick create
 - Windows notifications for due or high-priority tasks
 - notification actions for done, snooze, dismiss, and open source where available
+- weekly recurring tasks that create the next reminder task when completed
 
 ## Use The App
 
@@ -56,6 +57,7 @@ Tasks support:
 - source
 - external reference
 - note
+- recurring weekly schedule, for generated reminder tasks
 
 Unfinished tasks are ordered by due date, then created date. Tasks without due dates appear after dated tasks. `done` and `canceled` tasks are excluded from the unfinished list.
 
