@@ -1,6 +1,6 @@
 # Windows Installer
 
-The WinUI app is packaged with Velopack. Users install the generated `Setup.exe` from a GitHub release. The installed app checks GitHub Releases for newer Velopack packages when it launches.
+The WinUI app is packaged with Velopack. Users install the generated `Setup.exe` from a GitHub release. The installed app checks GitHub Releases for newer Velopack packages when it launches and every 30 minutes while running.
 
 ## Versioning
 

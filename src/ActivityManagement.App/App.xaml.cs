@@ -13,6 +13,7 @@ public sealed partial class App : Application
     private ShellIntegrationHost? _shellIntegration;
     private ReminderNotifications? _reminderNotifications;
     private ReleaseUpdater? _releaseUpdater;
+    private DispatcherTimer? _releaseUpdateTimer;
 
     public App()
     {
@@ -30,6 +31,9 @@ public sealed partial class App : Application
         _reminderNotifications = new ReminderNotifications(_store, _widgetWindow.DispatcherQueue, HandleNotificationAction, RefreshOpenWindows);
         _releaseUpdater = new ReleaseUpdater();
         _releaseUpdater.CheckForUpdates();
+        _releaseUpdateTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(30) };
+        _releaseUpdateTimer.Tick += (_, _) => _releaseUpdater?.CheckForUpdates();
+        _releaseUpdateTimer.Start();
 
         var activatedArgs = AppInstance.GetCurrent().GetActivatedEventArgs();
         if (activatedArgs.Kind == ExtendedActivationKind.AppNotification)
@@ -160,6 +164,7 @@ public sealed partial class App : Application
 
     private void ExitApplication()
     {
+        _releaseUpdateTimer?.Stop();
         _reminderNotifications?.Dispose();
         _widgetWindow?.Dispose();
         _shellIntegration?.Dispose();
