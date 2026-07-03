@@ -106,7 +106,8 @@ public sealed partial class App : Application
     private void OpenExternalReference(long taskId)
     {
         var task = _store.Get(taskId);
-        if (string.IsNullOrWhiteSpace(task?.ExternalReference))
+        var url = ExternalReferences.GetOpenableUrl(task?.ExternalReference);
+        if (url is null)
         {
             ShowFlyout();
             return;
@@ -114,7 +115,7 @@ public sealed partial class App : Application
 
         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
         {
-            FileName = task.ExternalReference,
+            FileName = url,
             UseShellExecute = true
         });
     }

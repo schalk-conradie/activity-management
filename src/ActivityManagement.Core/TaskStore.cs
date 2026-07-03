@@ -74,7 +74,22 @@ public sealed record ActivityTask(
 public sealed class TaskStore
 {
     private const int CurrentSchemaVersion = 2;
+    private const string TaskColumns = """
+        id,
+        title,
+        due_at,
+        priority,
+        status,
+        source,
+        external_reference,
+        note,
+        reminder_snoozed_until,
+        last_notified_at,
+        created_at,
+        updated_at
+        """;
     private readonly string _databasePath;
+    private bool _initialized;
 
     public TaskStore(string databasePath)
     {
@@ -112,10 +127,21 @@ public sealed class TaskStore
         {
             throw new NotSupportedException($"Unsupported activity database schema version {version}.");
         }
+
+        _initialized = true;
+    }
+
+    private void EnsureInitialized()
+    {
+        if (!_initialized)
+        {
+            throw new InvalidOperationException("TaskStore has not been initialized. Call Initialize() first.");
+        }
     }
 
     public ActivityTask Create(NewActivityTask task, DateTimeOffset? now = null)
     {
+        EnsureInitialized();
         if (string.IsNullOrWhiteSpace(task.Title))
         {
             throw new ArgumentException("Task title is required.", nameof(task));
@@ -125,7 +151,7 @@ public sealed class TaskStore
 
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = """
+        command.CommandText = $"""
             INSERT INTO tasks (
                 title,
                 due_at,
@@ -149,18 +175,7 @@ public sealed class TaskStore
                 $updated_at
             )
             RETURNING
-                id,
-                title,
-                due_at,
-                priority,
-                status,
-                source,
-                external_reference,
-                note,
-                reminder_snoozed_until,
-                last_notified_at,
-                created_at,
-                updated_at;
+                {TaskColumns};
             """;
         command.Parameters.AddWithValue("$title", task.Title);
         AddNullableDate(command, "$due_at", task.DueAt);
@@ -183,22 +198,12 @@ public sealed class TaskStore
 
     public IReadOnlyList<ActivityTask> ListUnfinished(int limit = 100)
     {
+        EnsureInitialized();
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = """
+        command.CommandText = $"""
             SELECT
-                id,
-                title,
-                due_at,
-                priority,
-                status,
-                source,
-                external_reference,
-                note,
-                reminder_snoozed_until,
-                last_notified_at,
-                created_at,
-                updated_at
+                {TaskColumns}
             FROM tasks
             WHERE status NOT IN ($done, $canceled)
             ORDER BY due_at IS NULL, due_at, created_at
@@ -213,22 +218,12 @@ public sealed class TaskStore
 
     public ActivityTask? Get(long id)
     {
+        EnsureInitialized();
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = """
+        command.CommandText = $"""
             SELECT
-                id,
-                title,
-                due_at,
-                priority,
-                status,
-                source,
-                external_reference,
-                note,
-                reminder_snoozed_until,
-                last_notified_at,
-                created_at,
-                updated_at
+                {TaskColumns}
             FROM tasks
             WHERE id = $id;
             """;
@@ -240,22 +235,12 @@ public sealed class TaskStore
 
     public ActivityTask? GetNextDue()
     {
+        EnsureInitialized();
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = """
+        command.CommandText = $"""
             SELECT
-                id,
-                title,
-                due_at,
-                priority,
-                status,
-                source,
-                external_reference,
-                note,
-                reminder_snoozed_until,
-                last_notified_at,
-                created_at,
-                updated_at
+                {TaskColumns}
             FROM tasks
             WHERE status NOT IN ($done, $canceled)
             ORDER BY due_at IS NULL, due_at, created_at
@@ -270,6 +255,7 @@ public sealed class TaskStore
 
     public bool UpdateStatus(long id, string status, DateTimeOffset? now = null)
     {
+        EnsureInitialized();
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
@@ -287,6 +273,7 @@ public sealed class TaskStore
 
     public ActivityTask? Update(ActivityTaskUpdate task, DateTimeOffset? now = null)
     {
+        EnsureInitialized();
         if (string.IsNullOrWhiteSpace(task.Title))
         {
             throw new ArgumentException("Task title is required.", nameof(task));
@@ -294,7 +281,7 @@ public sealed class TaskStore
 
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = """
+        command.CommandText = $"""
             UPDATE tasks
             SET title = $title,
                 due_at = $due_at,
@@ -306,18 +293,7 @@ public sealed class TaskStore
                 updated_at = $updated_at
             WHERE id = $id
             RETURNING
-                id,
-                title,
-                due_at,
-                priority,
-                status,
-                source,
-                external_reference,
-                note,
-                reminder_snoozed_until,
-                last_notified_at,
-                created_at,
-                updated_at;
+                {TaskColumns};
             """;
         command.Parameters.AddWithValue("$id", task.Id);
         command.Parameters.AddWithValue("$title", task.Title);
@@ -335,6 +311,7 @@ public sealed class TaskStore
 
     public bool SnoozeReminder(long id, TimeSpan duration, DateTimeOffset? now = null)
     {
+        EnsureInitialized();
         var timestamp = now ?? DateTimeOffset.UtcNow;
 
         using var connection = OpenConnection();
@@ -354,6 +331,7 @@ public sealed class TaskStore
 
     public bool RecordNotified(long id, DateTimeOffset? now = null)
     {
+        EnsureInitialized();
         var timestamp = now ?? DateTimeOffset.UtcNow;
 
         using var connection = OpenConnection();
@@ -373,22 +351,12 @@ public sealed class TaskStore
 
     public IReadOnlyList<ActivityTask> ListReminderCandidates(DateTimeOffset now, TimeSpan throttle)
     {
+        EnsureInitialized();
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = """
+        command.CommandText = $"""
             SELECT
-                id,
-                title,
-                due_at,
-                priority,
-                status,
-                source,
-                external_reference,
-                note,
-                reminder_snoozed_until,
-                last_notified_at,
-                created_at,
-                updated_at
+                {TaskColumns}
             FROM tasks
             WHERE status NOT IN ($done, $canceled)
               AND (
@@ -477,10 +445,6 @@ public sealed class TaskStore
 
         var connection = new SqliteConnection(builder.ToString());
         connection.Open();
-
-        using var command = connection.CreateCommand();
-        command.CommandText = "PRAGMA foreign_keys = ON;";
-        command.ExecuteNonQuery();
 
         return connection;
     }

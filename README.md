@@ -74,7 +74,7 @@ npm run dev
 The extension exposes two commands:
 
 - `Create New Task`: create a task in the shared local SQLite database.
-- `View All Tasks`: browse, inspect, update, complete, and open references for tasks.
+- `View Unfinished Tasks`: browse, inspect, update, complete, and open references for unfinished tasks.
 
 For a production build of the extension:
 

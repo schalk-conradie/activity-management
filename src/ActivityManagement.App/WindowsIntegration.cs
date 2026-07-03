@@ -103,6 +103,7 @@ internal static class WindowPlacement
 
 internal sealed class TaskbarWidgetHost : IDisposable
 {
+    // Native shell window classes we locate to reparent our widget into the taskbar band.
     private const string TaskbarClassName = "Shell_TrayWnd";
     private const string RebarClassName = "ReBarWindow32";
     private const string TrayNotifyClassName = "TrayNotifyWnd";
@@ -110,7 +111,9 @@ internal sealed class TaskbarWidgetHost : IDisposable
     // repeatedly pushing each other across the left side of the taskbar.
     private const string HostClassName = "DynamicContent2";
     private const int WidgetGap = 0;
+    // WS_POPUP: a borderless top-level window, reparented into the taskbar so it draws in-band.
     private const uint WsPopup = 0x80000000;
+    // WS_EX_LAYERED: lets the XAML content bridge composite with alpha over the taskbar.
     private const uint WsExLayered = 0x00080000;
     private readonly FrameworkElement _content;
     private readonly int _width;
@@ -230,6 +233,8 @@ internal sealed class TaskbarWidgetHost : IDisposable
         }
     }
 
+    // Finds the right edge of the nearest sibling widget to the left of our slot, so we place ourselves
+    // immediately to its right without overlapping it or native taskbar elements.
     private int GetLeftWidgetAnchor(Rect taskbarRect, Rect bandRect)
     {
         var maxRight = taskbarRect.Left;
@@ -371,6 +376,8 @@ internal sealed class TaskbarWidgetHost : IDisposable
         return length <= 0 ? string.Empty : buffer.ToString();
     }
 
+    // Shell-owned window classes, excluded when scanning for sibling widgets so we only account for
+    // other injected/custom widgets (e.g. the quota widget) and not native taskbar parts.
     private static bool IsSystemTaskbarClass(string className)
     {
         return className is "Start"
@@ -548,6 +555,8 @@ internal static class NativeWindowStyles
     private const long WsExAppWindow = 0x00040000;
     private const long WsExToolWindow = 0x00000080;
     private const long WsExNoActivate = 0x08000000;
+    private const byte VkMenu = 0x12;
+    private const uint KeyeventfKeyup = 0x0002;
 
     public static void HideFromTaskbar(Window window, bool noActivate)
     {
@@ -572,6 +581,28 @@ internal static class NativeWindowStyles
         {
             throw new Win32Exception(Marshal.GetLastWin32Error());
         }
+    }
+
+    public static void BringToForeground(Window window)
+    {
+        var hwnd = WindowNative.GetWindowHandle(window);
+        if (hwnd == IntPtr.Zero)
+        {
+            return;
+        }
+
+        ShowWindow(hwnd, ShowWindowCommand.Restore);
+        if (SetForegroundWindow(hwnd))
+        {
+            return;
+        }
+
+        // SetForegroundWindow is denied when the app was activated by a global hotkey rather than a click on
+        // one of its own windows. A synthesized ALT keypress resets the foreground lock so the window can
+        // take focus, which is the established workaround for hotkey-launched windows.
+        keybd_event(VkMenu, 0, 0, IntPtr.Zero);
+        keybd_event(VkMenu, 0, KeyeventfKeyup, IntPtr.Zero);
+        SetForegroundWindow(hwnd);
     }
 
     private static long GetWindowLong(IntPtr hwnd, int index)
@@ -610,11 +641,18 @@ internal static class NativeWindowStyles
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool ShowWindow(IntPtr hwnd, ShowWindowCommand command);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetForegroundWindow(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    private static extern void keybd_event(byte virtualKey, byte hardwareScanCode, uint flags, IntPtr extraInfo);
 }
 
 internal enum ShowWindowCommand
 {
-    Hide = 0
+    Hide = 0,
+    Restore = 9
 }
 
 [Flags]
@@ -685,6 +723,25 @@ internal static class StartupRegistration
     }
 }
 
+internal static class ExternalReferences
+{
+    public static string? GetOpenableUrl(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        if (Uri.TryCreate(value.Trim(), UriKind.Absolute, out var uri)
+            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+        {
+            return uri.ToString();
+        }
+
+        return null;
+    }
+}
+
 internal sealed class ReleaseUpdater
 {
     private const string RepositoryUrl = "https://github.com/schalk-conradie/activity-management";
@@ -722,6 +779,7 @@ internal sealed class ShellIntegrationHost : IDisposable
 {
     private const int HotkeyId = 1;
     private const int WmHotkey = 0x0312;
+    private const int WmNull = 0x0000;
     private const int WmTrayIcon = 0x8001;
     private const int WmCommand = 0x0111;
     private const int WmLeftButtonUp = 0x0202;
@@ -896,17 +954,29 @@ internal sealed class ShellIntegrationHost : IDisposable
             case WmHotkey:
                 _quickCreate();
                 return IntPtr.Zero;
-            case WmTrayIcon when lParam.ToInt32() == WmLeftButtonUp:
-                _showFlyout();
-                return IntPtr.Zero;
-            case WmTrayIcon when lParam.ToInt32() == WmRightButtonUp:
-                ShowTrayMenu();
+            case WmTrayIcon:
+                HandleTrayNotification(lParam);
                 return IntPtr.Zero;
             case WmCommand:
                 HandleMenuCommand((int)wParam & 0xffff);
                 return IntPtr.Zero;
             default:
                 return DefWindowProc(hwnd, message, wParam, lParam);
+        }
+    }
+
+    private void HandleTrayNotification(IntPtr lParam)
+    {
+        // Version 4 tray notifications pack the mouse message in the low word of lParam and the icon ID
+        // in the high word. Masking the low word keeps this working for pre-v4 icons too.
+        switch (lParam.ToInt32() & 0xffff)
+        {
+            case WmLeftButtonUp:
+                _showFlyout();
+                break;
+            case WmRightButtonUp:
+                ShowTrayMenu();
+                break;
         }
     }
 
@@ -930,6 +1000,7 @@ internal sealed class ShellIntegrationHost : IDisposable
             AppendMenu(menu, MfString, MenuExit, "Exit");
             SetForegroundWindow(_hwnd);
             TrackPopupMenu(menu, TpmRightButton, point.X, point.Y, 0, _hwnd, IntPtr.Zero);
+            PostMessage(_hwnd, WmNull, IntPtr.Zero, IntPtr.Zero);
         }
         finally
         {
@@ -976,6 +1047,9 @@ internal sealed class ShellIntegrationHost : IDisposable
 
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hwnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool PostMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
 
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern ushort RegisterClassEx(ref WindowClass windowClass);
@@ -1143,11 +1217,24 @@ internal sealed class ReminderNotifications : IDisposable
 
     private void SendDueNotifications()
     {
-        foreach (var task in _store.ListReminderCandidates(DateTimeOffset.UtcNow, ReminderThrottle))
+        try
         {
-            var notification = BuildNotification(task);
-            AppNotificationManager.Default.Show(notification);
-            _store.RecordNotified(task.Id);
+            foreach (var task in _store.ListReminderCandidates(DateTimeOffset.UtcNow, ReminderThrottle))
+            {
+                try
+                {
+                    AppNotificationManager.Default.Show(BuildNotification(task));
+                    _store.RecordNotified(task.Id);
+                }
+                catch (Exception ex)
+                {
+                    Error = $"Reminder notification for task {task.Id} failed: {ex.Message}";
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Error = $"Reminder candidates could not be loaded: {ex.Message}";
         }
 
         _tasksChanged();

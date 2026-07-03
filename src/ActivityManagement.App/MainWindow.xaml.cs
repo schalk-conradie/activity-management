@@ -70,50 +70,64 @@ public sealed partial class MainWindow : Window
         }
 
         Activate();
+        NativeWindowStyles.BringToForeground(this);
     }
 
     public async void ShowQuickCreateDialog(RectInt32? widgetBounds)
     {
-        ShowNearWidget(widgetBounds);
-
-        var titleBox = new TextBox { PlaceholderText = "Task title" };
-        var dueDatePicker = new CalendarDatePicker { PlaceholderText = "Due date" };
-        var dueTimePicker = new TimePicker { ClockIdentifier = "24HourClock" };
-        var priorityBox = CreatePriorityBox(ActivityTaskPriority.Normal);
-
-        var panel = new StackPanel { Spacing = 8 };
-        panel.Children.Add(titleBox);
-        panel.Children.Add(dueDatePicker);
-        panel.Children.Add(dueTimePicker);
-        panel.Children.Add(priorityBox);
-
-        var dialog = new ContentDialog
+        // The global hotkey can fire again before the previous dialog closes. Opening a second ContentDialog
+        // while one is already shown throws, and because this is async void that crashes the app. Bail out
+        // instead of re-entering.
+        if (_isDialogOpen)
         {
-            Title = "New task",
-            PrimaryButtonText = "Create",
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Primary,
-            Content = panel,
-            XamlRoot = Content.XamlRoot
-        };
+            return;
+        }
 
-        ContentDialogResult result;
         _isDialogOpen = true;
         try
         {
-            result = await dialog.ShowAsync();
+            ShowNearWidget(widgetBounds);
+
+            var xamlRoot = Content.XamlRoot;
+            if (xamlRoot is null)
+            {
+                // Window content is not realized yet; a later keypress after layout will open the dialog.
+                return;
+            }
+
+            var titleBox = new TextBox { PlaceholderText = "Task title" };
+            var dueDatePicker = new CalendarDatePicker { PlaceholderText = "Due date" };
+            var dueTimePicker = new TimePicker { ClockIdentifier = "24HourClock" };
+            var priorityBox = CreatePriorityBox(ActivityTaskPriority.Normal);
+
+            var panel = new StackPanel { Spacing = 8 };
+            panel.Children.Add(titleBox);
+            panel.Children.Add(dueDatePicker);
+            panel.Children.Add(dueTimePicker);
+            panel.Children.Add(priorityBox);
+
+            var dialog = new ContentDialog
+            {
+                Title = "New task",
+                PrimaryButtonText = "Create",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Primary,
+                Content = panel,
+                XamlRoot = xamlRoot
+            };
+
+            var result = await dialog.ShowAsync();
+            if (result != ContentDialogResult.Primary)
+            {
+                return;
+            }
+
+            CreateTask(titleBox.Text, dueDatePicker.Date, dueTimePicker.SelectedTime, SelectedPriority(priorityBox));
         }
         finally
         {
             _isDialogOpen = false;
         }
-
-        if (result != ContentDialogResult.Primary)
-        {
-            return;
-        }
-
-        CreateTask(titleBox.Text, dueDatePicker.Date, dueTimePicker.SelectedTime, SelectedPriority(priorityBox));
     }
 
     public void RefreshTasks()
@@ -168,6 +182,13 @@ public sealed partial class MainWindow : Window
 
     private async Task ShowTaskDetailDialog(long id)
     {
+        // A fast double-click on a task can start a second dialog before the first closes; re-entering throws
+        // because only one ContentDialog can be open at a time.
+        if (_isDialogOpen)
+        {
+            return;
+        }
+
         var task = _store.Get(id);
         if (task is null)
         {
@@ -294,14 +315,15 @@ public sealed partial class MainWindow : Window
         }
 
         var task = _store.Get(id);
-        if (string.IsNullOrWhiteSpace(task?.ExternalReference))
+        var url = ExternalReferences.GetOpenableUrl(task?.ExternalReference);
+        if (url is null)
         {
             return;
         }
 
         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
         {
-            FileName = task.ExternalReference,
+            FileName = url,
             UseShellExecute = true
         });
     }
@@ -423,11 +445,22 @@ public sealed class TaskRow
             Metadata = string.Join("  |  ", new[]
             {
                 FormatDue(task.DueAt),
-                task.Priority,
+                FormatPriority(task.Priority),
                 task.Source
             }.Where(value => !string.IsNullOrWhiteSpace(value))),
-            HasExternalReference = !string.IsNullOrWhiteSpace(task.ExternalReference)
+            HasExternalReference = ExternalReferences.GetOpenableUrl(task.ExternalReference) is not null
         };
+    }
+
+    private static string FormatPriority(string priority)
+    {
+        if (string.IsNullOrEmpty(priority))
+        {
+            return string.Empty;
+        }
+
+        var humanized = priority.Replace('_', ' ');
+        return char.ToUpperInvariant(humanized[0]) + humanized[1..];
     }
 
     private static string FormatDue(DateTimeOffset? dueAt)

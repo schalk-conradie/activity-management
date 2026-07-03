@@ -24,9 +24,9 @@
     {
       "mode": "view",
       "name": "view-all-tasks",
-      "title": "View All Tasks",
-      "description": "View all tasks in the local activity database",
-      "subtitle": "View all tasks"
+      "title": "View Unfinished Tasks",
+      "description": "View unfinished tasks in the local activity database",
+      "subtitle": "View unfinished tasks"
     }
   ],
   "tools": [],
