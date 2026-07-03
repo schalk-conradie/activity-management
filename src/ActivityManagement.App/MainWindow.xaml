@@ -6,10 +6,18 @@
     Title="Activity Management">
 
     <Grid Padding="16" RowSpacing="12" RowDefinitions="Auto,Auto,*,Auto" MinWidth="420" MinHeight="520">
-        <StackPanel Spacing="2">
-            <TextBlock x:Name="SummaryText" FontSize="20" FontWeight="SemiBold" Text="Tasks" />
-            <TextBlock x:Name="NextDueText" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-        </StackPanel>
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+            <StackPanel Spacing="2">
+                <TextBlock x:Name="SummaryText" FontSize="20" FontWeight="SemiBold" Text="Tasks" />
+                <TextBlock x:Name="NextDueText" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+            </StackPanel>
+            <Button Grid.Column="1" Click="RecurringTasks_Click" ToolTipService.ToolTip="Recurring tasks">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <SymbolIcon Symbol="Calendar" />
+                    <TextBlock Text="Recurring" />
+                </StackPanel>
+            </Button>
+        </Grid>
 
         <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="8">
             <TextBox x:Name="TitleBox" PlaceholderText="New task" />

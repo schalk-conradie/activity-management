@@ -28,7 +28,12 @@ public sealed partial class App : Application
         _widgetWindow = new WidgetWindow(_store, ShowFlyout, ShowQuickCreate);
 
         _shellIntegration = new ShellIntegrationHost(ShowFlyout, ShowQuickCreate, ExitApplication);
-        _reminderNotifications = new ReminderNotifications(_store, _widgetWindow.DispatcherQueue, HandleNotificationAction, RefreshOpenWindows);
+        _reminderNotifications = new ReminderNotifications(
+            _store,
+            _widgetWindow.DispatcherQueue,
+            HandleNotificationAction,
+            RefreshOpenWindows,
+            _shellIntegration.ShowReminderBalloon);
         _releaseUpdater = new ReleaseUpdater();
         _releaseUpdater.CheckForUpdates();
         _releaseUpdateTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(30) };
@@ -151,7 +156,7 @@ public sealed partial class App : Application
 
         if (!string.IsNullOrWhiteSpace(_reminderNotifications?.Error))
         {
-            messages.Add($"Notifications unavailable: {_reminderNotifications.Error}");
+            messages.Add(_reminderNotifications.Error);
         }
 
         if (!string.IsNullOrWhiteSpace(_releaseUpdater?.Error))

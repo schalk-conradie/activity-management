@@ -784,6 +784,7 @@ internal sealed class ShellIntegrationHost : IDisposable
     private const int WmCommand = 0x0111;
     private const int WmLeftButtonUp = 0x0202;
     private const int WmRightButtonUp = 0x0205;
+    private const int NinBalloonUserClick = 0x0405;
     private const uint MfString = 0x0000;
     private const uint TpmRightButton = 0x0002;
     private const int MenuOpen = 1001;
@@ -793,14 +794,19 @@ internal sealed class ShellIntegrationHost : IDisposable
     private const uint ModShift = 0x0004;
     private const uint TrayIconId = 1;
     private const uint NimAdd = 0;
+    private const uint NimModify = 1;
     private const uint NimDelete = 2;
     private const uint NimSetVersion = 4;
     private const uint NifMessage = 1;
     private const uint NifIcon = 2;
     private const uint NifTip = 4;
+    private const uint NifInfo = 16;
+    private const uint NiifInfo = 1;
     private const uint NotifyIconVersion4 = 4;
     private const uint ImageIcon = 1;
     private const uint LrDefaultSize = 0x00000040;
+    private const int MaxBalloonTextLength = 255;
+    private const int MaxBalloonTitleLength = 63;
     private static readonly IntPtr HwndMessage = new(-3);
     private static readonly IntPtr IdiApplication = new(32512);
 
@@ -829,6 +835,24 @@ internal sealed class ShellIntegrationHost : IDisposable
     public string? TrayError { get; private set; }
 
     public string? HotkeyError { get; private set; }
+
+    public string? ShowReminderBalloon(string title, string message)
+    {
+        if (!_trayRegistered)
+        {
+            return TrayError ?? "Tray icon is not registered.";
+        }
+
+        var data = CreateNotifyIconData();
+        data.Flags = NifInfo;
+        data.InfoTitle = title.Length > MaxBalloonTitleLength ? title[..MaxBalloonTitleLength] : title;
+        data.Info = message.Length > MaxBalloonTextLength ? message[..MaxBalloonTextLength] : message;
+        data.InfoFlags = NiifInfo;
+
+        return Shell_NotifyIcon(NimModify, ref data)
+            ? null
+            : new Win32Exception(Marshal.GetLastWin32Error()).Message;
+    }
 
     public void Dispose()
     {
@@ -972,6 +996,7 @@ internal sealed class ShellIntegrationHost : IDisposable
         switch (lParam.ToInt32() & 0xffff)
         {
             case WmLeftButtonUp:
+            case NinBalloonUserClick:
                 _showFlyout();
                 break;
             case WmRightButtonUp:
@@ -1156,38 +1181,38 @@ internal sealed class ReminderNotifications : IDisposable
     public const string ActionDismiss = "dismiss";
     public const string ActionOpenSource = "open_source";
 
+    private const int RegdbClassNotRegistered = unchecked((int)0x80040154);
     private static readonly TimeSpan ReminderThrottle = TimeSpan.FromMinutes(30);
     private readonly TaskStore _store;
     private readonly DispatcherQueueTimer _timer;
     private readonly Action<string, long> _handleAction;
     private readonly Action _tasksChanged;
+    private readonly Func<string, string, string?> _showFallbackNotification;
     private bool _registered;
 
     public ReminderNotifications(
         TaskStore store,
         DispatcherQueue dispatcherQueue,
         Action<string, long> handleAction,
-        Action tasksChanged)
+        Action tasksChanged,
+        Func<string, string, string?> showFallbackNotification)
     {
         _store = store;
         _handleAction = handleAction;
         _tasksChanged = tasksChanged;
+        _showFallbackNotification = showFallbackNotification;
         _timer = dispatcherQueue.CreateTimer();
         _timer.Interval = TimeSpan.FromMinutes(1);
         _timer.Tick += (_, _) => SendDueNotifications();
 
-        try
+        var canUseAppNotifications = TryRegisterAppNotifications();
+        if (!canUseAppNotifications && string.IsNullOrWhiteSpace(Error))
         {
-            AppNotificationManager.Default.NotificationInvoked += NotificationInvoked;
-            AppNotificationManager.Default.Register();
-            _registered = true;
-            _timer.Start();
-            SendDueNotifications();
+            Error = "Notification actions unavailable: Windows app notifications are not available for this installation; using tray reminders.";
         }
-        catch (Exception ex)
-        {
-            Error = ex.Message;
-        }
+
+        _timer.Start();
+        SendDueNotifications();
     }
 
     public string? Error { get; private set; }
@@ -1200,6 +1225,31 @@ internal sealed class ReminderNotifications : IDisposable
             AppNotificationManager.Default.NotificationInvoked -= NotificationInvoked;
             AppNotificationManager.Default.Unregister();
             _registered = false;
+        }
+    }
+
+    private bool TryRegisterAppNotifications()
+    {
+        try
+        {
+            if (!AppNotificationManager.IsSupported())
+            {
+                return false;
+            }
+
+            AppNotificationManager.Default.NotificationInvoked += NotificationInvoked;
+            AppNotificationManager.Default.Register();
+            _registered = true;
+            return true;
+        }
+        catch (COMException ex) when (ex.HResult == RegdbClassNotRegistered)
+        {
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Error = $"Notification actions unavailable: Windows app notifications could not be registered: {ex.Message}";
+            return false;
         }
     }
 
@@ -1223,7 +1273,13 @@ internal sealed class ReminderNotifications : IDisposable
             {
                 try
                 {
-                    AppNotificationManager.Default.Show(BuildNotification(task));
+                    var fallbackError = ShowReminder(task);
+                    if (fallbackError is not null)
+                    {
+                        Error = $"Reminder notification for task {task.Id} failed: {fallbackError}";
+                        continue;
+                    }
+
                     _store.RecordNotified(task.Id);
                 }
                 catch (Exception ex)
@@ -1238,6 +1294,25 @@ internal sealed class ReminderNotifications : IDisposable
         }
 
         _tasksChanged();
+    }
+
+    private string? ShowReminder(ActivityTask task)
+    {
+        if (_registered)
+        {
+            try
+            {
+                AppNotificationManager.Default.Show(BuildNotification(task));
+                return null;
+            }
+            catch (COMException ex) when (ex.HResult == RegdbClassNotRegistered)
+            {
+                _registered = false;
+                Error = "Notification actions unavailable: Windows app notifications are no longer available; using tray reminders.";
+            }
+        }
+
+        return _showFallbackNotification(task.Title, BuildNotificationDetail(task));
     }
 
     private static AppNotification BuildNotification(ActivityTask task)

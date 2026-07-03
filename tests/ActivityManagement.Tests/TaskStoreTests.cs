@@ -62,6 +62,61 @@ public sealed class TaskStoreTests
     }
 
     [Fact]
+    public void CreateRecurringTaskCreatesInitialScheduledTask()
+    {
+        using var fixture = TestDatabase.Create();
+        fixture.Store.Initialize();
+        var now = LocalDateTime(2026, 7, 2, 10, 0);
+
+        var schedule = fixture.Store.CreateRecurringTask(new NewRecurringTask(
+            "Timesheet",
+            DayOfWeek.Friday,
+            new TimeSpan(16, 0, 0),
+            ActivityTaskPriority.High,
+            "https://example.com/timesheet",
+            "Submit weekly timesheet"), now);
+
+        Assert.NotNull(schedule.LastTaskId);
+        var task = fixture.Store.Get(schedule.LastTaskId.Value);
+
+        Assert.NotNull(task);
+        Assert.Equal(schedule.Id, task!.RecurringTaskId);
+        Assert.Equal("Timesheet", task.Title);
+        Assert.Equal(ActivityTaskPriority.High, task.Priority);
+        Assert.Equal("recurring", task.Source);
+        Assert.Equal("https://example.com/timesheet", task.ExternalReference);
+        Assert.Equal("Submit weekly timesheet", task.Note);
+        Assert.Equal(DayOfWeek.Friday, task.DueAt!.Value.ToLocalTime().DayOfWeek);
+        Assert.Equal(new TimeSpan(16, 0, 0), task.DueAt.Value.ToLocalTime().TimeOfDay);
+        Assert.Equal(schedule.Id, Assert.Single(fixture.Store.ListRecurringTasks()).Id);
+    }
+
+    [Fact]
+    public void CompletingRecurringTaskCreatesNextFutureTaskOnce()
+    {
+        using var fixture = TestDatabase.Create();
+        fixture.Store.Initialize();
+        var now = LocalDateTime(2026, 7, 2, 10, 0);
+        var schedule = fixture.Store.CreateRecurringTask(new NewRecurringTask(
+            "Timesheet",
+            DayOfWeek.Friday,
+            new TimeSpan(16, 0, 0)), now);
+        var firstTask = fixture.Store.Get(schedule.LastTaskId!.Value)!;
+        var completedAt = firstTask.DueAt!.Value.AddDays(3);
+
+        Assert.True(fixture.Store.UpdateStatus(firstTask.Id, ActivityTaskStatus.Done, completedAt));
+
+        var nextTask = Assert.Single(fixture.Store.ListUnfinished(), task => task.RecurringTaskId == schedule.Id);
+        Assert.NotEqual(firstTask.Id, nextTask.Id);
+        Assert.Equal(DayOfWeek.Friday, nextTask.DueAt!.Value.ToLocalTime().DayOfWeek);
+        Assert.Equal(new TimeSpan(16, 0, 0), nextTask.DueAt.Value.ToLocalTime().TimeOfDay);
+        Assert.True(nextTask.DueAt.Value > completedAt);
+
+        Assert.True(fixture.Store.UpdateStatus(firstTask.Id, ActivityTaskStatus.Done, completedAt.AddMinutes(1)));
+        Assert.Single(fixture.Store.ListUnfinished(), task => task.RecurringTaskId == schedule.Id);
+    }
+
+    [Fact]
     public void UpdateStoresEditableTaskProperties()
     {
         using var fixture = TestDatabase.Create();
@@ -94,6 +149,32 @@ public sealed class TaskStoreTests
     }
 
     [Fact]
+    public void UpdatingRecurringTaskToDoneCreatesNextTask()
+    {
+        using var fixture = TestDatabase.Create();
+        fixture.Store.Initialize();
+        var now = LocalDateTime(2026, 7, 2, 10, 0);
+        var schedule = fixture.Store.CreateRecurringTask(new NewRecurringTask(
+            "Timesheet",
+            DayOfWeek.Friday,
+            new TimeSpan(16, 0, 0)), now);
+        var firstTask = fixture.Store.Get(schedule.LastTaskId!.Value)!;
+
+        var updated = fixture.Store.Update(new ActivityTaskUpdate(
+            firstTask.Id,
+            firstTask.Title,
+            firstTask.DueAt,
+            firstTask.Priority,
+            ActivityTaskStatus.Done,
+            firstTask.Source,
+            firstTask.ExternalReference,
+            firstTask.Note), firstTask.DueAt!.Value.AddMinutes(30));
+
+        Assert.NotNull(updated);
+        Assert.Single(fixture.Store.ListUnfinished(), task => task.RecurringTaskId == schedule.Id);
+    }
+
+    [Fact]
     public void ReminderCandidatesIncludeDueAndImportantUnfinishedTasks()
     {
         using var fixture = TestDatabase.Create();
@@ -109,6 +190,12 @@ public sealed class TaskStoreTests
         var tasks = fixture.Store.ListReminderCandidates(now, TimeSpan.FromMinutes(30));
 
         Assert.Equal([due.Id, high.Id], tasks.Select(task => task.Id));
+    }
+
+    private static DateTimeOffset LocalDateTime(int year, int month, int day, int hour, int minute)
+    {
+        var localDateTime = new DateTime(year, month, day, hour, minute, 0);
+        return new DateTimeOffset(localDateTime, TimeZoneInfo.Local.GetUtcOffset(localDateTime));
     }
 
     private sealed class TestDatabase : IDisposable
